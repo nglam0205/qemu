@@ -45,26 +45,21 @@ jobs:
 
       - name: Checkout QEMU Gunyah
         run: |
-          git clone --filter=blob:none \
-            https://github.com/patchew-project/qemu.git qemu
-
+          git init qemu
           cd qemu
+
+          git remote add origin https://github.com/patchew-project/qemu.git
 
           git fetch --depth=1 origin \
             "refs/tags/${GUNYAH_TAG}:refs/tags/gunyah-v2"
 
           git checkout --detach gunyah-v2
 
-      - name: Checkout required submodule only
-        working-directory: qemu
-        run: |
-          git submodule update \
-            --init \
-            --depth 1 \
-            --jobs "$(nproc)" \
-            ui/keycodemapdb
+          echo "===== QEMU VERSION ====="
+          cat VERSION
 
-          test -f ui/keycodemapdb/README
+          echo "===== SUBMODULE CONFIGURATION ====="
+          cat .gitmodules
 
       - name: Configure QEMU
         working-directory: qemu
@@ -75,7 +70,6 @@ jobs:
           ../configure \
             --target-list=aarch64-softmmu \
             --enable-gunyah \
-            --with-git-submodules=ignore \
             --disable-werror \
             --disable-docs \
             --disable-gtk \
@@ -86,17 +80,25 @@ jobs:
       - name: Compile QEMU
         working-directory: qemu/build
         run: |
+          echo "CPU threads: $(nproc)"
           ninja -j"$(nproc)"
 
       - name: Verify Gunyah accelerator
         working-directory: qemu/build
         run: |
+          set -e
+
           ./qemu-system-aarch64 --version
 
           ./qemu-system-aarch64 -accel help \
             2>&1 | tee gunyah-accelerators.txt
 
-          grep -qi gunyah gunyah-accelerators.txt
+          if ! grep -qi gunyah gunyah-accelerators.txt; then
+            echo "ERROR: Gunyah accelerator not found"
+            exit 1
+          fi
+
+          echo "Gunyah accelerator detected!"
 
       - name: Package binary
         run: |
@@ -108,16 +110,17 @@ jobs:
           cat > output/README.txt <<'EOF'
           QEMU Gunyah ARM64
 
+          Architecture: ARM64
           Target: aarch64-softmmu
           Accelerator: Gunyah
-          Architecture: ARM64
+
           Build: GitHub Actions
 
-          This is a Linux ARM64 binary.
+          This binary is built for Linux ARM64.
           It is not an Android APK.
 
-          Gunyah accelerator requires a compatible
-          Linux host with Gunyah kernel support.
+          Gunyah requires a compatible host kernel
+          and Gunyah hypervisor interface.
           EOF
 
           tar -czf qemu-gunyah-arm64.tar.gz output/
