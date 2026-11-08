@@ -1,0 +1,116 @@
+
+name: Build QEMU Gunyah ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-qemu-gunyah.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build QEMU Gunyah
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+
+    env:
+      GUNYAH_TAG: patchew/20240516143356.1739402-1-quic._5Fsvaddagi@quicinc.com
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git build-essential \
+            ninja-build meson pkg-config \
+            python3 python3-venv \
+            flex bison \
+            libglib2.0-dev \
+            libpixman-1-dev \
+            zlib1g-dev \
+            libfdt-dev \
+            libslirp-dev \
+            libcapstone-dev \
+            libaio-dev \
+            liburing-dev \
+            libnuma-dev \
+            libgcrypt20-dev \
+            libgnutls28-dev \
+            libbz2-dev \
+            liblz4-dev \
+            libzstd-dev \
+            libusb-1.0-0-dev
+
+      - name: Checkout QEMU Gunyah
+        run: |
+          git clone https://github.com/patchew-project/qemu.git qemu
+          cd qemu
+
+          git fetch origin \
+            "refs/tags/${GUNYAH_TAG}:refs/tags/gunyah-v2"
+
+          git checkout --detach gunyah-v2
+
+          git submodule update --init --recursive
+
+      - name: Configure QEMU
+        working-directory: qemu
+        run: |
+          mkdir -p build
+          cd build
+
+          ../configure \
+            --target-list=aarch64-softmmu \
+            --enable-gunyah \
+            --disable-werror \
+            --disable-docs \
+            --disable-gtk \
+            --disable-sdl \
+            --disable-opengl \
+            --disable-vnc
+
+      - name: Compile QEMU
+        working-directory: qemu/build
+        run: |
+          ninja -j4
+
+      - name: Verify Gunyah accelerator
+        working-directory: qemu/build
+        run: |
+          ./qemu-system-aarch64 --version
+
+          ./qemu-system-aarch64 -accel help \
+            | tee gunyah-accelerators.txt
+
+          grep -qi gunyah gunyah-accelerators.txt
+
+      - name: Package binary
+        run: |
+          mkdir -p output
+
+          cp qemu/build/qemu-system-aarch64 output/
+          cp qemu/build/gunyah-accelerators.txt output/
+
+          cat > output/README.txt <<'EOF'
+          QEMU Gunyah ARM64
+          Target: aarch64-softmmu
+          Accelerator: Gunyah
+          Build: GitHub Actions
+          
+          Note:
+          This binary requires a compatible Linux Gunyah host.
+          It is not an Android APK.
+          EOF
+
+          tar -czf qemu-gunyah-arm64.tar.gz output/
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-gunyah-arm64
+          path: qemu-gunyah-arm64.tar.gz
+          retention-days: 30
+          
